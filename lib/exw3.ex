@@ -519,7 +519,7 @@ defmodule ExW3 do
       GenServer.call(ContractManager, {:address, name})
     end
 
-    @spec call(atom(), atom(), list()) :: {:ok, any()}
+    @spec call(atom(), atom(), list()) :: tuple
     @doc "Use a Contract's method with an eth_call"
     def call(contract_name, method_name, args \\ []) do
       GenServer.call(ContractManager, {:call, {contract_name, method_name, args}})
