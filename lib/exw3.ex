@@ -193,6 +193,9 @@ defmodule ExW3 do
 
         {:ok, Map.merge(receipt, decimal_res)}
 
+      {:error, _} = error ->
+        error
+
       err ->
         {:error, err}
     end
@@ -981,52 +984,61 @@ defmodule ExW3 do
     end
 
     def handle_call({:tx_receipt, {contract_name, tx_hash}}, _from, state) do
-      contract_info = state[contract_name]
+      case ExW3.tx_receipt(tx_hash) do
+        {:error, :not_mined} ->
+          {:reply, {:ok, nil}, state}
 
-      {:ok, receipt} = ExW3.tx_receipt(tx_hash)
+        {:error, %{"code" => -32602}} ->
+          {:reply, {:ok, nil}, state}
 
-      events = contract_info[:events]
-      logs = receipt["logs"]
+        {:ok, receipt} ->
+          contract_info = state[contract_name]
+          events = contract_info[:events]
+          logs = receipt["logs"]
 
-      formatted_logs =
-        Enum.map(logs, fn log ->
-          topic = Enum.at(log["topics"], 0)
-          event_attributes = Map.get(events, topic)
+          formatted_logs = format_logs(logs, events)
 
-          if event_attributes do
-            non_indexed_fields =
-              Enum.zip(
-                event_attributes[:non_indexed_names],
-                ExW3.decode_event(log["data"], event_attributes[:signature])
-              )
-              |> Enum.into(%{})
+          {:reply, {:ok, {receipt, formatted_logs}}, state}
+      end
+    end
 
-            if length(log["topics"]) > 1 do
-              [_head | tail] = log["topics"]
+    defp format_logs(logs, events) do
+      Enum.map(logs, fn log ->
+        topic = Enum.at(log["topics"], 0)
+        event_attributes = Map.get(events, topic)
 
-              decoded_topics =
-                Enum.map(0..(length(tail) - 1), fn i ->
-                  topic_type = Enum.at(event_attributes[:topic_types], i)
-                  topic_data = Enum.at(tail, i)
+        if event_attributes do
+          non_indexed_fields =
+            Enum.zip(
+              event_attributes[:non_indexed_names],
+              ExW3.decode_event(log["data"], event_attributes[:signature])
+            )
+            |> Enum.into(%{})
 
-                  {decoded} = ExW3.decode_data(topic_type, topic_data)
+          if length(log["topics"]) > 1 do
+            [_head | tail] = log["topics"]
 
-                  decoded
-                end)
+            decoded_topics =
+              Enum.map(0..(length(tail) - 1), fn i ->
+                topic_type = Enum.at(event_attributes[:topic_types], i)
+                topic_data = Enum.at(tail, i)
 
-              indexed_fields =
-                Enum.zip(event_attributes[:topic_names], decoded_topics) |> Enum.into(%{})
+                {decoded} = ExW3.decode_data(topic_type, topic_data)
 
-              Map.merge(indexed_fields, non_indexed_fields)
-            else
-              non_indexed_fields
-            end
+                decoded
+              end)
+
+            indexed_fields =
+              Enum.zip(event_attributes[:topic_names], decoded_topics) |> Enum.into(%{})
+
+            Map.merge(indexed_fields, non_indexed_fields)
           else
-            nil
+            non_indexed_fields
           end
-        end)
-
-      {:reply, {:ok, {receipt, formatted_logs}}, state}
+        else
+          nil
+        end
+      end)
     end
   end
 end
